@@ -64,6 +64,8 @@ Homepage = "https://revana.si"
 Documentation = "https://revana.si/docs"
 Pricing = "https://revana.si/pricing"
 "API reference" = "https://revana.si/openapi.json"
+Repository = "https://github.com/Aribk7/revana-python"
+Issues = "https://github.com/Aribk7/revana-python/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/revana"]
