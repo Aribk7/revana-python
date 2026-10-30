@@ -1,0 +1,77 @@
+[build-system]
+requires = ["hatchling>=1.18"]
+build-backend = "hatchling.build"
+
+[project]
+name = "revana"
+version = "0.1.0"
+description = "Official Revana SDK and CLI: one API key for Seedance, Veo, Kling, Nano Banana, GPT Image, Wan, Hailuo and 200+ image, video, music and chat models. Cheapest route first, automatic fallback, failed generations are free."
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.9"
+authors = [{ name = "Revana", email = "hello@revana.si" }]
+keywords = [
+  "revana",
+  "ai",
+  "ai video api",
+  "ai image api",
+  "video generation",
+  "image generation",
+  "text to video",
+  "image to video",
+  "text to image",
+  "seedance",
+  "seedance 2.5",
+  "veo",
+  "veo 3",
+  "kling",
+  "nano banana",
+  "nano banana pro",
+  "gpt image",
+  "wan",
+  "hailuo",
+  "minimax",
+  "sdk",
+  "api",
+]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Multimedia :: Video",
+  "Topic :: Multimedia :: Graphics",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+  "Typing :: Typed",
+]
+dependencies = ["httpx>=0.23,<1"]
+
+[project.optional-dependencies]
+dev = ["pytest>=7", "pytest-asyncio>=0.21"]
+
+[project.scripts]
+revana = "revana.cli:main"
+
+[project.urls]
+Homepage = "https://revana.si"
+Documentation = "https://revana.si/docs"
+Pricing = "https://revana.si/pricing"
+"API reference" = "https://revana.si/openapi.json"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/revana"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src/revana", "tests", "examples", "README.md", "LICENSE"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
