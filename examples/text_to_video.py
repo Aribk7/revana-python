@@ -1,6 +1,6 @@
 """Text to video with Seedance 2.5, saved to corgi.mp4.
 
-    export REVANA_API_KEY=rv_...
+    export REVANA_API_KEY=sr_live_...
     python examples/text_to_video.py
 """
 
