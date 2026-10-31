@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Mapping, Optional
 
 from .types import Generation
 
-__all__ = ["RevanaError", "GenerationFailedError", "WaitTimeoutError"]
+__all__ = ["RevanaError", "EndpointNotAvailableError", "GenerationFailedError", "WaitTimeoutError"]
 
 
 class RevanaError(Exception):
@@ -12,14 +12,50 @@ class RevanaError(Exception):
 
     Network failures and request timeouts that outlast the retries are raised as a
     RevanaError too, with status 0 and code "network_error" or "timeout".
+
+    Attributes:
+        headers: The response's headers (None for network errors).
+        request_id: The request id (``req_`` and 20 hex digits) from ``error.request_id`` or the
+            X-Request-Id header, when the API sent one (API versions deployed after 2026-10-31 do).
+            Quote it when asking for help.
+        retry_after: Seconds to wait before trying again, from Retry-After (429 and 503), or None.
     """
 
-    def __init__(self, status: int, code: str, message: str, body: Any = None) -> None:
-        super().__init__(f"{status} {code}: {message}")
+    def __init__(
+        self,
+        status: int,
+        code: str,
+        message: str,
+        body: Any = None,
+        *,
+        headers: Optional[Mapping[str, str]] = None,
+        request_id: Optional[str] = None,
+        retry_after: Optional[float] = None,
+    ) -> None:
+        super().__init__(f"{status} {code}: {message}" + (f" (request {request_id})" if request_id else ""))
         self.status = status
         self.code = code
         self.message = message
         self.body = body
+        self.headers = headers
+        self.request_id = request_id
+        self.retry_after = retry_after
+
+
+class EndpointNotAvailableError(RevanaError):
+    """A 404 from an endpoint this API server does not have yet.
+
+    ``generations.quote()`` and ``generations.list()`` need an API version deployed after 2026-10-31.
+    """
+
+    def __init__(self, method: str, path: str, body: Any = None, **details: Any) -> None:
+        super().__init__(
+            404,
+            "endpoint_not_available",
+            f"{method} {path} is not available on this API server; it needs an API version deployed after 2026-10-31",
+            body,
+            **details,
+        )
 
 
 class GenerationFailedError(Exception):

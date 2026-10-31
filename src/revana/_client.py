@@ -1,24 +1,28 @@
 from __future__ import annotations
 
 import time
-from typing import Any, Callable, Dict, List, Optional, cast
+from datetime import datetime
+from typing import Any, Callable, Dict, Iterator, List, Literal, Optional, Union, cast, overload
 
 import httpx
 
 from ._base import (
     DEFAULT_MAX_RETRIES,
+    DEFAULT_MAX_RETRY_AFTER,
     DEFAULT_POLL_INTERVAL,
     DEFAULT_TIMEOUT,
     DEFAULT_WAIT_TIMEOUT,
     BaseClient,
     _quote,
     generation_body,
+    list_params,
     random_key,
     read_file,
     upload_body,
 )
 from ._errors import RevanaError
-from .types import Balance, FileInput, Generation, InputLike, Model, Upload
+from ._streaming import ChatStream
+from .types import Balance, FileInput, Generation, GenerationList, InputLike, Model, Quote, Upload
 
 __all__ = ["Revana"]
 
@@ -45,6 +49,7 @@ class Revana(BaseClient):
         base_url: Optional[str] = None,
         max_retries: int = DEFAULT_MAX_RETRIES,
         timeout: float = DEFAULT_TIMEOUT,
+        max_retry_after: float = DEFAULT_MAX_RETRY_AFTER,
         http_client: Optional[httpx.Client] = None,
     ) -> None:
         """
@@ -53,9 +58,11 @@ class Revana(BaseClient):
             base_url: Defaults to REVANA_BASE_URL, else https://api.revana.si.
             max_retries: Retries for 429, 5xx and network errors. Default 3.
             timeout: Per-request timeout in seconds. Default 60.
+            max_retry_after: The longest Retry-After (seconds) an automatic retry waits for; a longer one
+                is raised to you. Default 60.
             http_client: Your own httpx.Client (proxies, transports, tests).
         """
-        super().__init__(api_key, base_url, max_retries, timeout)
+        super().__init__(api_key, base_url, max_retries, timeout, max_retry_after)
         self._owns_client = http_client is None
         self._http = http_client or httpx.Client(follow_redirects=True)
         self.generations = Generations(self)
@@ -79,7 +86,7 @@ class Revana(BaseClient):
         input: InputLike,
         *,
         max_cost_usd: Optional[float] = None,
-        max_wait_s: Optional[float] = None,
+        max_wait_s: Optional[int] = None,
         idempotency_key: Optional[str] = None,
         timeout: float = DEFAULT_WAIT_TIMEOUT,
         poll_interval: float = DEFAULT_POLL_INTERVAL,
@@ -114,8 +121,17 @@ class Revana(BaseClient):
         body: Any = None,
         idempotency_key: Optional[str] = None,
         auth: bool = True,
+        params: Optional[Dict[str, str]] = None,
+        retry: Optional[bool] = None,
+        new_endpoint: bool = False,
     ) -> httpx.Response:
+        """One request, retrying 429, 5xx and network errors when that is safe (see _retry_wait).
+
+        retry=True retries a POST without an idempotency key (a quote changes nothing). new_endpoint=True
+        turns a 404 into EndpointNotAvailableError: the server predates that endpoint.
+        """
         headers = self._headers(auth=auth, json_body=body is not None, idempotency_key=idempotency_key)
+        retry_safe = self._retry_safe(method, idempotency_key) if retry is None else retry
         attempt = 0
         while True:
             try:
@@ -124,25 +140,41 @@ class Revana(BaseClient):
                     self.base_url + path,
                     headers=headers,
                     json=body,
+                    params=params,
                     timeout=self.timeout,
                     follow_redirects=True,
                 )
             except httpx.TransportError as exc:
-                if attempt >= self.max_retries or not self._retry_safe(method, idempotency_key):
+                if attempt >= self.max_retries or not retry_safe:
                     raise self._network_error(exc) from exc
                 time.sleep(self._backoff(attempt))
                 attempt += 1
                 continue
             if res.is_success:
                 return res
-            if self._is_retryable(res) and attempt < self.max_retries and self._retry_safe(method, idempotency_key):
-                delay = self._retry_delay(res, attempt)
-                res.close()
-                time.sleep(delay)
-                attempt += 1
-                continue
-            raise self._error_from(res)
+            error = self._error_from(res, method, path, new_endpoint)
+            wait = self._retry_wait(error, attempt) if retry_safe else None
+            if wait is None:
+                raise error
+            res.close()
+            time.sleep(wait)
+            attempt += 1
 
+    def _stream_chat(self, body: Dict[str, Any]) -> ChatStream:
+        """POST a chat with stream: true; answers once the stream has started. Never retried (billed per token)."""
+        headers = self._headers(auth=True, json_body=True, idempotency_key=None, accept="text/event-stream")
+        req = self._http.build_request(
+            "POST", self.base_url + "/v1/chat/completions", headers=headers, json=body, timeout=self.timeout
+        )
+        try:
+            res = self._http.send(req, stream=True)
+        except httpx.TransportError as exc:
+            raise self._network_error(exc) from exc
+        if not res.is_success:
+            res.read()
+            res.close()
+            raise self._error_from(res)
+        return ChatStream(res)
 
 class Generations:
     def __init__(self, client: Revana) -> None:
@@ -154,7 +186,7 @@ class Generations:
         model: str,
         input: InputLike,
         max_cost_usd: Optional[float] = None,
-        max_wait_s: Optional[float] = None,
+        max_wait_s: Optional[int] = None,
         idempotency_key: Optional[str] = None,
         **extra: Any,
     ) -> Generation:
@@ -166,6 +198,62 @@ class Generations:
         body = generation_body(model, dict(input), max_cost_usd, max_wait_s, extra)
         key = idempotency_key or random_key()
         return cast(Generation, self._client._request("POST", "/v1/generations", body=body, idempotency_key=key))
+
+    def quote(
+        self,
+        *,
+        model: str,
+        input: InputLike,
+        max_cost_usd: Optional[float] = None,
+        max_wait_s: Optional[int] = None,
+        **extra: Any,
+    ) -> Quote:
+        """What a generation would cost: the same arguments as create(), worked out the same way.
+
+        Free; nothing is created or held. Use ``quoted_usd`` as ``max_cost_usd`` on the create.
+        Needs an API version deployed after 2026-10-31; an older server raises EndpointNotAvailableError.
+        """
+        body = generation_body(model, dict(input), max_cost_usd, max_wait_s, extra)
+        return cast(
+            Quote,
+            self._client._request("POST", "/v1/generations/quote", body=body, retry=True, new_endpoint=True),
+        )
+
+    def list(
+        self,
+        *,
+        limit: Optional[int] = None,
+        before: Union[str, datetime, None] = None,
+        status: Optional[str] = None,
+        model: Optional[str] = None,
+    ) -> GenerationList:
+        """One page of the key's own generations, newest first: ``{data, has_more, next_before}``.
+
+        Pass ``next_before`` as ``before`` for the next page, or use list_all().
+        Needs an API version deployed after 2026-10-31; an older server raises EndpointNotAvailableError.
+        """
+        params = list_params(limit, before, status, model)
+        return cast(
+            GenerationList,
+            self._client._request("GET", "/v1/generations", params=params, new_endpoint=True),
+        )
+
+    def list_all(
+        self,
+        *,
+        limit: Optional[int] = None,
+        before: Union[str, datetime, None] = None,
+        status: Optional[str] = None,
+        model: Optional[str] = None,
+    ) -> Iterator[Generation]:
+        """Every generation matching the filters, newest first, fetching pages as you iterate."""
+        while True:
+            page = self.list(limit=limit, before=before, status=status, model=model)
+            for g in page["data"]:
+                yield g
+            if not page.get("has_more") or not page.get("next_before"):
+                return
+            before = page["next_before"]
 
     def get(self, id: str) -> Generation:
         return cast(Generation, self._client._request("GET", f"/v1/generations/{_quote(id)}"))
@@ -209,8 +297,11 @@ class Models:
         self._client = client
 
     def list(self) -> List[Model]:
-        """Every model you can generate with now, with its options and price. No key needed."""
-        return cast(List[Model], self._client._request("GET", "/v1/models", auth=False)["data"])
+        """Every model you can generate with now, with its options and price.
+
+        No key is needed; when the client has one it is sent, so the prices are the account's own price book.
+        """
+        return cast(List[Model], self._client._request("GET", "/v1/models", auth=self._client._has_key)["data"])
 
     def get(self, id: str) -> Optional[Model]:
         """One model by id, or None."""
@@ -254,9 +345,25 @@ class Completions:
     def __init__(self, client: Revana) -> None:
         self._client = client
 
-    def create(self, **body: Any) -> Dict[str, Any]:
-        """OpenAI-compatible chat completions: ``create(model=..., messages=[...])``."""
+    @overload
+    def create(self, *, stream: Literal[True], **body: Any) -> ChatStream: ...
+
+    @overload
+    def create(self, *, stream: Literal[False] = ..., **body: Any) -> Dict[str, Any]: ...
+
+    def create(self, *, stream: bool = False, **body: Any) -> Union[ChatStream, Dict[str, Any]]:
+        """OpenAI-compatible chat completions: ``create(model=..., messages=[...])``.
+
+        With ``stream=True`` it answers a ChatStream of chunks (server-sent events) once the stream has started.
+        Chat is billed per token and is never retried automatically.
+        """
+        if stream:
+            return self._client._stream_chat({**body, "stream": True})
         return cast(Dict[str, Any], self._client._request("POST", "/v1/chat/completions", body=body))
+
+    def stream(self, **body: Any) -> ChatStream:
+        """The same as ``create(..., stream=True)``."""
+        return self._client._stream_chat({**body, "stream": True})
 
 
 class Chat:

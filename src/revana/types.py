@@ -11,6 +11,8 @@ __all__ = [
     "Generation",
     "Model",
     "Balance",
+    "Quote",
+    "GenerationList",
     "Upload",
     "FileInput",
     "InputLike",
@@ -62,6 +64,8 @@ class GenerationOutput(_GenerationOutputRequired, total=False):
     width: int
     height: int
     has_audio: bool
+    #: Audio only: the length of each file in urls, in order.
+    durations_s: List[Optional[float]]
 
 
 class _GenerationErrorRequired(TypedDict):
@@ -123,6 +127,41 @@ class _BalanceRequired(TypedDict):
 
 class Balance(_BalanceRequired, total=False):
     spent_usd: float
+    #: The account's price book, when it has one (e.g. "standard").
+    price_tier: str
+    #: When a time-limited price tier ends.
+    price_tier_until: Optional[str]
+
+
+class _QuoteRequired(TypedDict):
+    object: Literal["quote"]
+    model: str
+    currency: Literal["usd"]
+    #: The price of the route tried first: what a successful generation normally costs.
+    quoted_usd: float
+    #: The hold a create would take: the most it can be charged. Never above max_cost_usd.
+    reserved_usd: Optional[float]
+    #: How long the first route usually takes.
+    estimated_seconds: Optional[float]
+
+
+class Quote(_QuoteRequired, total=False):
+    """What a generation would cost, from ``generations.quote()``. Nothing is created or held."""
+
+    #: With a customer key: what the account can spend now.
+    available_usd: float
+    #: With a customer key: whether available_usd covers reserved_usd.
+    enough_credit: bool
+
+
+class GenerationList(TypedDict):
+    """One page of ``generations.list()``, newest first."""
+
+    object: Literal["list"]
+    data: List[Generation]
+    has_more: bool
+    #: Pass as ``before`` for the next page; None on the last.
+    next_before: Optional[str]
 
 
 class _UploadRequired(TypedDict):

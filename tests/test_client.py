@@ -145,10 +145,16 @@ def test_429_retried_with_same_idempotency_key(no_sleep: List[float]) -> None:
     assert 1.0 <= no_sleep[1] < 1.25  # then backoff 0.5 * 2^1 + jitter
 
 
-def test_retry_after_capped_at_60(no_sleep: List[float]) -> None:
+def test_retry_after_over_the_limit_is_raised_not_cut_short(no_sleep: List[float]) -> None:
+    mock = Mock(httpx.Response(429, headers={"retry-after": "600"}))
+    with pytest.raises(RevanaError) as ei:
+        client(mock).balance()
+    assert ei.value.retry_after == 600
+    assert no_sleep == [] and len(mock.calls) == 1  # never retried sooner than the server asked
+
     mock = Mock(httpx.Response(429, headers={"retry-after": "600"}), httpx.Response(200, json={"available_usd": 1}))
-    client(mock).balance()
-    assert no_sleep == [60]
+    client(mock, max_retry_after=900).balance()
+    assert no_sleep == [600]
 
 
 def test_post_without_idempotency_key_not_retried() -> None:
