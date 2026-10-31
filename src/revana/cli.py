@@ -18,7 +18,9 @@ HELP = f"""revana {__version__}: one API key for 200+ image, video and music mod
 Usage:
   revana models [search]              List models with prices (no key needed)
   revana generate <model> <prompt> [options]
+  revana quote <model> <prompt> [options]   Price it first (free; same options as generate)
   revana get <generation-id>          Show a generation
+  revana list [--limit n] [--status s] [--model m]   Your recent generations
   revana download <generation-id> [-o file]
   revana upload <file>                Upload a local file, print a URL to use as a reference
   revana balance                      What your key can spend
@@ -37,6 +39,8 @@ Generate options:
   -o, --out <file>      Save the result here (default: <id>.<ext>)
   --no-wait             Submit and print the id without waiting
   --json                Print the generation as JSON
+
+quote and list need an API version deployed after 2026-10-31.
 
 Set REVANA_API_KEY first. Create a key at https://revana.si/dashboard"""
 
@@ -66,6 +70,10 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument("--set", action="append", default=[])
     p.add_argument("--max-cost", type=float)
     p.add_argument("--no-wait", action="store_true")
+    p.add_argument("--limit", type=int)
+    p.add_argument("--status", choices=["queued", "running", "succeeded", "failed"])
+    p.add_argument("--model")
+    p.add_argument("--before")
     return p
 
 
@@ -90,10 +98,47 @@ def _ext_for(url: Optional[str], kind: Optional[str] = None) -> str:
     return ".png" if kind == "image" else ".mp3" if kind == "audio" else ".mp4"
 
 
+def _kind(gen: Generation, model_kind: Optional[str]) -> str:
+    """image, audio or video: the model's kind, else what the output carries."""
+    if model_kind in ("image", "audio", "video"):
+        return model_kind
+    out: Dict[str, Any] = dict(gen.get("output") or {})
+    if out.get("durations_s") or ("duration_s" in out and "width" not in out and "has_audio" not in out):
+        return "audio"
+    if "width" in out and "duration_s" not in out:
+        return "image"
+    return "video"
+
+
+def _model_kind(client: Revana, model: Optional[str]) -> Optional[str]:
+    if not model:
+        return None
+    try:
+        found = client.models.get(model)
+    except RevanaError:
+        return None
+    return found.get("kind") if found else None
+
+
+def _usd(v: Any) -> str:
+    if isinstance(v, bool):
+        return ""
+    if isinstance(v, (int, float)):
+        return f"${v:g}"
+    if isinstance(v, str):
+        return v if v.startswith("$") else f"${v}"
+    return ""
+
+
 def _price(p: Any) -> str:
+    """A model's list price in one line: "$0.21/s", "720p $0.21, 1080p $0.52/s", "in $1/M, out $5/M tokens"."""
     if not isinstance(p, dict):
         return ""
     unit, usd = p.get("unit"), p.get("usd")
+    if unit == "per_million_tokens" or (usd is None and ("input" in p or "output" in p)):
+        return f"in {_usd(p.get('input'))}/M, out {_usd(p.get('output'))}/M tokens"
+    if p.get("free") is True:
+        return "free"
     if unit == "per_second":
         per = "/s"
     elif unit == "per_image":
@@ -102,10 +147,11 @@ def _price(p: Any) -> str:
         per = "/" + str(unit).replace("per_", "", 1)
     else:
         per = ""
-    if isinstance(usd, str):
-        return f"{usd}{per}"
+    if isinstance(usd, (int, float, str)) and not isinstance(usd, bool):
+        return f"{_usd(usd)}{per}"
     if isinstance(usd, dict):
-        return ", ".join(f"{k} {v}" for k, v in list(usd.items())[:4]) + per
+        items = list(usd.items())
+        return ", ".join(f"{k} {_usd(v)}" for k, v in items[:4]) + (", ..." if len(items) > 4 else "") + per
     return ""
 
 
@@ -161,10 +207,20 @@ def _run(argv: List[str]) -> None:
         gen = client.generations.get(gen_id)
         if not (gen.get("output") or {"urls": []})["urls"]:
             raise ValueError(f"Generation {gen_id} has no output yet (status {gen.get('status')})")
-        _save_outputs(client, gen, a.out, None, echo=True)
+        _save_outputs(client, gen, a.out, _kind(gen, _model_kind(client, gen.get("model"))), echo=True)
     elif cmd == "upload":
         print(_media(client, _need(pos, "file")))
-    elif cmd in ("generate", "gen"):
+    elif cmd == "list":
+        page = client.generations.list(limit=a.limit, status=a.status, model=a.model, before=a.before)
+        if a.json:
+            print(json.dumps(page, indent=2))
+            return
+        for g in page["data"]:
+            cost = f"${g['cost_usd']}" if g.get("cost_usd") is not None else ""
+            print(f"{g['id']}  {g['status']:<9} {g['model']:<24} {cost}  {g.get('created_at', '')}")
+        if page.get("has_more") and page.get("next_before"):
+            print(f"more: revana list --before {page['next_before']}", file=sys.stderr)
+    elif cmd in ("generate", "gen", "quote"):
         model = _need(pos, "model")
         prompt = " ".join(pos[1:])
         inp: Dict[str, Any] = {}
@@ -192,6 +248,16 @@ def _run(argv: List[str]) -> None:
                 inp[k] = json.loads(v)
             except ValueError:
                 inp[k] = v
+        if cmd == "quote":
+            quote = client.generations.quote(model=model, input=inp, max_cost_usd=a.max_cost)
+            if a.json:
+                print(json.dumps(quote, indent=2))
+                return
+            reserved = quote.get("reserved_usd")
+            most = f" (at most ${reserved})" if reserved is not None and reserved > quote["quoted_usd"] else ""
+            credit = f"; only ${quote.get('available_usd')} available" if quote.get("enough_credit") is False else ""
+            print(f"${quote['quoted_usd']}{most}{credit}")
+            return
         if a.no_wait:
             g = client.generations.create(model=model, input=inp, max_cost_usd=a.max_cost)
             print(json.dumps(g, indent=2) if a.json else f"{g['id']} {g['status']} (quoted ${g.get('quoted_usd')})")
@@ -207,12 +273,7 @@ def _run(argv: List[str]) -> None:
         gen = client.generate(model=model, input=inp, max_cost_usd=a.max_cost, on_update=on_update)
         if a.json:
             print(json.dumps(gen, indent=2))
-        try:
-            found = client.models.get(model)
-            kind = found.get("kind") if found else None
-        except Exception:
-            kind = None
-        _save_outputs(client, gen, a.out, kind, echo=not a.json)
+        _save_outputs(client, gen, a.out, _kind(gen, _model_kind(client, model)), echo=not a.json)
         print(f"cost ${gen.get('cost_usd') or 0}", file=sys.stderr)
     else:
         raise ValueError(f'Unknown command "{cmd}". Run: revana --help')
@@ -222,7 +283,8 @@ def main(argv: Optional[List[str]] = None) -> None:
     try:
         _run(sys.argv[1:] if argv is None else argv)
     except GenerationFailedError as err:
-        print(f"{err}{' (retryable)' if err.retryable else ''}. Nothing was charged.", file=sys.stderr)
+        hint = " (retryable: running the command again tries anew)" if err.retryable else ""
+        print(f"{err}{hint}. Nothing was charged.", file=sys.stderr)
         sys.exit(1)
     except (RevanaError, ValueError, OSError) as err:
         print(str(err), file=sys.stderr)

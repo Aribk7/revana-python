@@ -18,7 +18,7 @@ pip install revana
 Create an API key at [revana.si/dashboard](https://revana.si/dashboard) and set it:
 
 ```bash
-export REVANA_API_KEY=rv_...
+export REVANA_API_KEY=sr_live_...
 ```
 
 ## Text to video
@@ -45,6 +45,29 @@ with open("corgi.mp4", "wb") as f:
 gen = revana.generations.create(model="nano-banana-pro", input={"prompt": "a red fox, studio light"})
 gen = revana.generations.wait(gen["id"], timeout=600, on_update=lambda g: print(g["status"]))
 ```
+
+## Price it first
+
+```python
+from revana import EndpointNotAvailableError
+
+quote = revana.generations.quote(model="seedance-2.5", input={"prompt": "a corgi surfing", "duration": 5})
+print(quote["quoted_usd"], quote.get("enough_credit"))  # free: nothing is created or held
+video = revana.generate(model="seedance-2.5", input={"prompt": "a corgi surfing", "duration": 5},
+                        max_cost_usd=quote["quoted_usd"])
+```
+
+`generations.quote()` takes the same arguments as `create()` and prices the exact request the way the create will, including what a start image adds on some models, which `models.list()` does not show. **It requires an API version deployed after 2026-10-31**; an older server raises `EndpointNotAvailableError` (a `RevanaError` with status 404 and code `endpoint_not_available`), and then you price from `models.list()`.
+
+## Your generations
+
+```python
+page = revana.generations.list(limit=20, status="succeeded")  # {"data", "has_more", "next_before"}
+for g in revana.generations.list_all(model="seedance-2.5"):   # every page, newest first
+    print(g["id"], g["cost_usd"])
+```
+
+Pass a page's `next_before` as `before` for the next one, or let `list_all()` do it (`async for` on `AsyncRevana`). **It requires an API version deployed after 2026-10-31**; an older server raises `EndpointNotAvailableError`.
 
 ## Async
 
@@ -81,7 +104,7 @@ Raw bytes work too: `revana.uploads.upload(data, content_type="image/jpeg")`.
 ## Models and balance
 
 ```python
-for m in revana.models.list():  # no key needed
+for m in revana.models.list():  # no key needed; with one, your account's own prices
     print(m["id"], m.get("kind"), m.get("price"))
 
 print(revana.models.get("veo-3.1-fast"))
@@ -100,6 +123,17 @@ reply = revana.chat.completions.create(
 print(reply["choices"][0]["message"]["content"])
 ```
 
+Streamed, as server-sent events:
+
+```python
+with revana.chat.completions.create(model="gpt-5-mini", messages=messages, stream=True) as stream:
+    for chunk in stream:
+        if chunk["choices"]:
+            print(chunk["choices"][0]["delta"].get("content", ""), end="", flush=True)
+```
+
+`chat.completions.stream(...)` does the same; on `AsyncRevana`, `await` it and use `async for`. Chat is billed per token and is never retried automatically.
+
 ## Errors
 
 ```python
@@ -114,19 +148,24 @@ except WaitTimeoutError as e:
     # Still running after `timeout` seconds; it may still finish.
     print("still waiting on", e.generation["id"])
 except RevanaError as e:
-    # The API refused the request, e.g. 402 insufficient_credits or 422 invalid_input.
-    print(e.status, e.code, e.message)
+    # The API refused the request, e.g. 402 insufficient_credits, 422 invalid_input, 403 card_required.
+    print(e.status, e.code, e.message, e.request_id)  # quote request_id when asking for help
 ```
 
 | Error | When | Fields |
 | --- | --- | --- |
-| `RevanaError` | An HTTP error from the API, a missing key (`missing_api_key`, raised before any request), or a network failure after the retries (status 0, `network_error` / `timeout`) | `status`, `code`, `message`, `body` |
+| `RevanaError` | An HTTP error from the API, a missing key (`missing_api_key`, raised before any request), or a network failure after the retries (status 0, `network_error` / `timeout`) | `status`, `code`, `message`, `body`, `headers`, `request_id`, `retry_after` |
+| `EndpointNotAvailableError` | A `RevanaError`: `quote()` or `list()` on an API server from before the 2026-10-31 deploy | as `RevanaError` |
 | `GenerationFailedError` | The generation ended in `failed`. Never charged. | `generation`, `code`, `retryable` |
 | `WaitTimeoutError` | Waiting took longer than `timeout` | `generation` |
 
+`request_id` (from `error.request_id` or the `X-Request-Id` header) and `retry_after` (seconds, from `Retry-After` on 429 and 503) are sent by API versions deployed after 2026-10-31; on an older server they are `None`. The legacy `{"error": "...", "code": ...}` shape is read too.
+
 ## Retries and idempotency
 
-429, 5xx and network errors are retried up to `max_retries` times (default 3), honoring `Retry-After` (up to 60 s) and otherwise backing off exponentially. Only requests that are safe to repeat are retried: GETs, and POSTs that carry an `Idempotency-Key`. `generations.create()` always sends one (a random UUID unless you pass `idempotency_key=`), reused across its retries, so the same generation is never started twice. Pass your own key to make a retry safe across processes too.
+- 429, 5xx and network errors are retried up to `max_retries` times (default 3), never sooner than `Retry-After`, and otherwise with exponential backoff. A `Retry-After` longer than `max_retry_after` (60 s), or a 429 `concurrency_limit` without one, is raised to you instead: a slot frees only when one of your generations finishes.
+- Only requests that are safe to repeat are retried: GETs, quotes, and POSTs that carry an `Idempotency-Key`. `generations.create()` always sends one (a random UUID unless you pass `idempotency_key=`), reused across its retries, so the same generation is never started twice. To resend a create yourself after a timeout or a 5xx, pass the same `idempotency_key=`.
+- After a generation has **failed** (`GenerationFailedError`), call again **without** the old key: the old key keeps answering the failed generation. Each `generate()` call makes a new key.
 
 ## Configuration
 
@@ -135,7 +174,8 @@ Revana(
     api_key=None,        # default: REVANA_API_KEY
     base_url=None,       # default: REVANA_BASE_URL, else https://api.revana.si
     max_retries=3,
-    timeout=60,          # seconds per request
+    timeout=60,          # seconds per request (httpx: per connect, read and write)
+    max_retry_after=60,  # a longer Retry-After is raised, not waited out
     http_client=None,    # your own httpx.Client / httpx.AsyncClient
 )
 ```
@@ -150,7 +190,11 @@ revana generate kling-2.6-pro "she turns and smiles" --image ./photo.jpg --aspec
 revana get gen_...
 revana download gen_... -o out.mp4
 revana upload ./reference.png
+revana quote seedance-2.5 "slow orbit" --image ./product.png --duration 5   # free
+revana list --status succeeded --limit 10
 ```
+
+`quote` and `list` require an API version deployed after 2026-10-31. `download` names files by the model's kind (`.png`, `.mp3`, `.mp4`).
 
 Generate options: `--duration`, `--resolution`, `--aspect`, `--audio`, `--image`, `--end-image`, `--ref` (repeatable), `--video`, `--set key=value` (repeatable), `--max-cost`, `-o/--out`, `--no-wait`, `--json`. Run `revana --help` for the full list.
 
