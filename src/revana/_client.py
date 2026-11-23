@@ -28,7 +28,7 @@ __all__ = ["Revana"]
 
 
 class Revana(BaseClient):
-    """The Revana client: one API key for 200+ image, video, music and chat models.
+    """The Revana client: one AI API for video, image, music and chat models.
 
     ```python
     from revana import Revana

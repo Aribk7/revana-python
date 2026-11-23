@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "revana"
-version = "0.1.0"
-description = "Official Revana SDK and CLI: one API key for Seedance, Veo, Kling, Nano Banana, GPT Image, Wan, Hailuo and 200+ image, video, music and chat models. Cheapest route first, automatic fallback, failed generations are free."
+version = "0.1.1"
+description = "Official Revana SDK and CLI: one AI API for video, image, music and chat models. One API key for Seedance, Veo, Kling, Nano Banana, GPT Image, Wan, Hailuo and 200+ models in all. If a provider route fails, the same model runs on another route; the model you asked for never changes. Failed generations are free."
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]

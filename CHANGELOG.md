@@ -1,8 +1,9 @@
 # Changelog
 
-## Unreleased
+## 0.1.1 (2026-11-22)
 
-Follow-ups from the 2026-10-31 API audit. Not published yet; the version stays 0.1.0 until a release.
+Follow-ups from the 2026-10-31 API audit, and a corrected package description: one AI API for video, image, music
+and chat models; a fallback changes only the provider route, never the model.
 
 ### Requires an API version deployed after 2026-10-31
 

@@ -1,6 +1,6 @@
 # Revana Python SDK
 
-The official Python SDK and CLI for [Revana](https://revana.si): one API key for 200+ image, video, music and chat models, including Seedance 2.5, Veo 3.1, Kling, Nano Banana Pro, GPT Image, Wan, Hailuo and MiniMax. Each request takes the cheapest working route first and falls back automatically. A failed generation is never charged.
+The official Python SDK and CLI for [Revana](https://revana.si): one AI API for video, image, music and chat models: one API key for 200+ models, including Seedance 2.5, Veo 3.1, Kling, Nano Banana Pro, GPT Image, Wan, Hailuo and MiniMax. Each request takes the cheapest working route first; if a provider route fails, the same model runs on another route, and the model you asked for never changes. A failed generation is never charged.
 
 - Sync and async clients (`Revana`, `AsyncRevana`) built on [httpx](https://www.python-httpx.org/)
 - Fully typed (`py.typed`), Python 3.9+

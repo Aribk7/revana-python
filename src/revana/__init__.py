@@ -1,4 +1,4 @@
-"""Revana: one API key for 200+ image, video, music and chat models.
+"""Revana: one AI API for video, image, music and chat models.
 
 https://revana.si · API reference: https://revana.si/openapi.json
 """

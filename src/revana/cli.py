@@ -13,7 +13,7 @@ from . import GenerationFailedError, Revana, RevanaError, __version__
 from ._base import MIME
 from .types import Generation
 
-HELP = f"""revana {__version__}: one API key for 200+ image, video and music models (https://revana.si)
+HELP = f"""revana {__version__}: one AI API for video, image, music and chat models (https://revana.si)
 
 Usage:
   revana models [search]              List models with prices (no key needed)

@@ -32,7 +32,7 @@ OnUpdate = Callable[[Generation], Union[None, Awaitable[None]]]
 
 
 class AsyncRevana(BaseClient):
-    """The async Revana client: one API key for 200+ image, video, music and chat models.
+    """The async Revana client: one AI API for video, image, music and chat models.
 
     ```python
     from revana import AsyncRevana
