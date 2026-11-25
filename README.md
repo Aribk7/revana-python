@@ -1,6 +1,6 @@
 # Revana Python SDK
 
-The official Python SDK and CLI for [Revana](https://revana.si): one AI API for video, image, music and chat models: one API key for 200+ models, including Seedance 2.5, Veo 3.1, Kling, Nano Banana Pro, GPT Image, Wan, Hailuo and MiniMax. Each request takes the cheapest working route first; if a provider route fails, the same model runs on another route, and the model you asked for never changes. A failed generation is never charged.
+The official Python SDK and CLI for [Revana](https://revana.si): one AI API for video, image, music and chat models: one API key for 200+ models, including Seedance 2.5, MAGI 2, Veo 3.1, Kling, Nano Banana Pro, GPT Image, Wan, Hailuo and MiniMax. Each request takes the cheapest working route first; if a provider route fails, the same model runs on another route, and the model you asked for never changes. A failed generation is never charged.
 
 - Sync and async clients (`Revana`, `AsyncRevana`) built on [httpx](https://www.python-httpx.org/)
 - Fully typed (`py.typed`), Python 3.9+
@@ -100,6 +100,18 @@ video = revana.generate(
 ```
 
 Raw bytes work too: `revana.uploads.upload(data, content_type="image/jpeg")`.
+
+## Newest models
+
+Every model is listed, with live prices, by `models.list()` and at [revana.si/models](https://revana.si/models). Added lately:
+
+| Model id | What it makes | Added |
+| --- | --- | --- |
+| `magi-2` | Sand AI's MAGI 2: 4-30 s of 1080p video with sound, from text, a first and last frame, or reference images, videos and audio | 2026-11-25 |
+| `kling-image-4.0` | Kuaishou's Kling Image 4.0: pictures and edits at 2K, 4K or 8K | 2026-11-18 |
+| `mai-image-2.7`, `mai-image-2.7-flash` | Microsoft's MAI Image 2.7 and its low-cost Flash: pictures and edits at 1K or 2K | 2026-11-18 |
+| `elevenlabs-voice-changer` | ElevenLabs voice changer: a recording back in another voice, same words and timing | 2026-11-18 |
+| `seedance-2.5-flash` | The light, low-cost Seedance 2.5: 4-30 s at 480p or 720p with sound | 2026-11-16 |
 
 ## Models and balance
 

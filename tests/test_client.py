@@ -75,7 +75,7 @@ def test_auth_and_idempotency_headers() -> None:
     req = mock.calls[0]
     assert req.method == "POST" and str(req.url) == f"{BASE}/v1/generations"
     assert req.headers["authorization"] == "Bearer rv_test"
-    assert req.headers["user-agent"] == "revana-python/0.1.1"
+    assert req.headers["user-agent"] == "revana-python/0.1.2"
     assert len(req.headers["idempotency-key"]) == 36  # uuid4
     assert json.loads(req.content) == {"model": "seedance-2.5", "input": {"prompt": "hi"}, "max_cost_usd": 2}
 
@@ -287,7 +287,7 @@ async def test_async_happy_path(tmp_path: Any) -> None:
         assert (await c.models.get("veo-3.1-fast")) is not None
     assert updates == ["queued", "running", "succeeded"]
     assert mock.calls[0].headers["idempotency-key"]
-    assert mock.calls[0].headers["user-agent"] == "revana-python/0.1.1"
+    assert mock.calls[0].headers["user-agent"] == "revana-python/0.1.2"
 
 
 async def test_async_retry_and_error() -> None:

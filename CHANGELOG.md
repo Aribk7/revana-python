@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.2 (2026-11-25)
+
+Docs only; the SDK code is unchanged from 0.1.1.
+
+- README: a "Newest models" table. New since 0.1.1: `magi-2` (Sand AI's MAGI 2, 1080p video with sound, 4-30 s).
+  Models that leave the public list (`bytedance-video-upscaler`) disappear from `models.list()` by themselves.
+- Version 0.1.2.
+
 ## 0.1.1 (2026-11-22)
 
 Follow-ups from the 2026-10-31 API audit, and a corrected package description: one AI API for video, image, music
